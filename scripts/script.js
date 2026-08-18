@@ -32,6 +32,17 @@ import {
   URL_PRELOAD_DELAY_MS,
 } from "./config.js";
 
+const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+
+/**
+ * Escapes HTML metacharacters in a plain-text string before it's interpolated
+ * into innerHTML. Quote/author/source text comes from the (potentially
+ * contributor-submitted) quotes JSON, not from trusted markup.
+ */
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, (c) => HTML_ESCAPES[c]);
+}
+
 // =========================================
 // RUNTIME CONFIG
 // =========================================
@@ -72,6 +83,8 @@ const state = {
   wheelTimeout: null,
   /** setTimeout ID for the long-press gesture */
   longPressTimer: null,
+  /** setTimeout ID for the next ambient CRT interference flash — self-rescheduling, lives for the page's whole lifetime */
+  interferenceTimerId: null,
   /** Quote currently on screen */
   currentQuote: null,
   /** Character position within the current typing pass */
@@ -863,7 +876,7 @@ function displayQuote(
         ? `<span class="source"> — <span class="source-text">${sourceHTML}</span></span>`
         : "";
       elements.quoteContainer.innerHTML =
-        `<span class="text-selected">${quoteText}</span>` +
+        `<span class="text-selected">${escapeHtml(quoteText)}</span>` +
         `<span class="author">${prompt ? prompt + " " : ""}<span class="author-name">${authorHTML}</span>${sourcePart} ` +
         `<span class="cursor-block" aria-hidden="true"></span></span>`;
       elements.quoteContainer.style.textTransform = state.isUppercase
@@ -902,7 +915,7 @@ function displayQuote(
 
       const typedText = quoteText.slice(0, state.currentIndex + 1);
       elements.quoteContainer.innerHTML =
-        `<span class="text-selected">${typedText}</span>` +
+        `<span class="text-selected">${escapeHtml(typedText)}</span>` +
         `<span class="cursor-block" aria-hidden="true"></span>`;
 
       PerformanceUtils.handleAutoScroll();
@@ -929,8 +942,8 @@ function displayQuote(
       const typedAuthor = authorTypingText.slice(0, authorIndex + 1);
 
       elements.quoteContainer.innerHTML =
-        `<span class="text-selected">${quoteText}</span>` +
-        `<span class="author">${typedAuthor}<span class="cursor-block" aria-hidden="true"></span></span>`;
+        `<span class="text-selected">${escapeHtml(quoteText)}</span>` +
+        `<span class="author">${escapeHtml(typedAuthor)}<span class="cursor-block" aria-hidden="true"></span></span>`;
 
       elements.quoteContainer.style.textTransform = state.isUppercase
         ? "uppercase"
@@ -954,6 +967,10 @@ function displayQuote(
       renderParked();
       state.isTyping = false;
       state.isPaused = true;
+      // #quote-container is aria-live="off" (rapid per-character mutation
+      // during typing would otherwise spam screen readers), so announce
+      // the finished quote once here instead.
+      QuoteUtils.announceAction(QuoteUtils.getTweetText(quote));
 
       state.parkTimeoutId = setTimeout(() => {
         state.parkTimeoutId = null;
@@ -1938,7 +1955,7 @@ function renderC64Directory() {
       .toUpperCase()
       .slice(0, 16);
     const name = `"${rawAuthor}"`.padEnd(20);
-    const line = `${blocks} ${name}   PRG`;
+    const line = escapeHtml(`${blocks} ${name}   PRG`);
     return i === selected
       ? `<span class="text-selected">${line}</span>`
       : `<span>${line}</span>`;
@@ -1975,7 +1992,7 @@ function renderAppleIICatalog() {
       .trim();
     const truncAuthor =
       rawAuthor.length > 22 ? rawAuthor.slice(0, 22) + "\u2026" : rawAuthor;
-    const line = ` T ${sectors} ${truncAuthor}`;
+    const line = escapeHtml(` T ${sectors} ${truncAuthor}`);
     return i === selected
       ? `<span class="text-selected">${line}</span>`
       : `<span>${line}</span>`;
@@ -2597,7 +2614,8 @@ function scheduleInterference() {
   const minMs = 3 * 60 * 1000;
   const maxMs = 7 * 60 * 1000;
   const delay = minMs + Math.random() * (maxMs - minMs);
-  setTimeout(() => {
+  clearTimeout(state.interferenceTimerId);
+  state.interferenceTimerId = setTimeout(() => {
     if (!document.hidden) {
       document.body.classList.add("crt-interference");
       document.body.addEventListener(
