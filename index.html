@@ -31,9 +31,6 @@
       2. favicon      — inline PNG data URL so the tab icon is correct instantly,
                         with no flash of the default SVG before colours.js fires
 
-    There is no manifest.json / PWA install prompt yet — if one is added later,
-    patch its theme_color here too so it doesn't drift from the two jobs above.
-
     Favicon data URLs are pre-rendered 1×1 solid-colour PNGs (minimal valid PNG,
     ~100 bytes each). The canvas approach in colours.js handles live theme changes;
     this script only handles the cold-load case where JS hasn't run yet.

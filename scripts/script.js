@@ -764,6 +764,7 @@ export function updateLivePrompt() {
  * @param {string | null} [preformattedAuthor=null] - Pre-rendered author HTML.
  * @param {boolean} [skipHistory=false] - Don't add to navigation history.
  * @param {string | null} [preformattedSource=null] - Pre-rendered source HTML.
+ * @param {boolean} [announceOnComplete=true] - Announce the quote to screen readers once display finishes.
  */
 function displayQuoteWithTransition(
   quote,
@@ -772,6 +773,7 @@ function displayQuoteWithTransition(
   preformattedAuthor = null,
   skipHistory = false,
   preformattedSource = null,
+  announceOnComplete = true,
 ) {
   PerformanceUtils.cancelAllTimers();
   hidePositionIndicator();
@@ -785,6 +787,7 @@ function displayQuoteWithTransition(
     preformattedAuthor,
     skipHistory,
     preformattedSource,
+    announceOnComplete,
   );
 }
 
@@ -800,6 +803,7 @@ function displayQuoteWithTransition(
  * @param {string | null} [preformattedAuthor=null]
  * @param {boolean} [skipHistory=false]
  * @param {string | null} [preformattedSource=null]
+ * @param {boolean} [announceOnComplete=true] - Announce the quote to screen readers once display finishes.
  */
 function displayQuote(
   quote,
@@ -808,6 +812,7 @@ function displayQuote(
   preformattedAuthor = null,
   skipHistory = false,
   preformattedSource = null,
+  announceOnComplete = true,
 ) {
   if (!isValidQuote(quote)) {
     console.warn("Tried to display invalid quote:", quote);
@@ -894,6 +899,18 @@ function displayQuote(
     }
   }
 
+  /**
+   * Announces the finished quote once, on whichever completion path is hit.
+   * #quote-container is aria-live="off" (rapid per-character mutation during
+   * typing would otherwise spam screen readers), so this is the only
+   * announcement AT users get for this quote.
+   */
+  function announceCompletion() {
+    if (announceOnComplete) {
+      QuoteUtils.announceAction(QuoteUtils.getTweetText(quote));
+    }
+  }
+
   function typeQuote() {
     const msPerChar = QuoteUtils.getMsPerChar();
     const finishNow = finishImmediately || msPerChar === 0 || state.isPaused;
@@ -903,6 +920,7 @@ function displayQuote(
       state.currentIndex = quoteText.length;
       state.isTyping = false;
       state.isPaused = true;
+      announceCompletion();
       return;
     }
 
@@ -967,10 +985,7 @@ function displayQuote(
       renderParked();
       state.isTyping = false;
       state.isPaused = true;
-      // #quote-container is aria-live="off" (rapid per-character mutation
-      // during typing would otherwise spam screen readers), so announce
-      // the finished quote once here instead.
-      QuoteUtils.announceAction(QuoteUtils.getTweetText(quote));
+      announceCompletion();
 
       state.parkTimeoutId = setTimeout(() => {
         state.parkTimeoutId = null;
@@ -2597,9 +2612,12 @@ function showQuoteOfTheDay() {
   const now = new Date();
   const dateStr = now.toISOString().slice(0, 10); // YYYY-MM-DD UTC
   state.isPaused = false;
-  displayQuoteWithTransition(quote, 0, true);
+  // Suppress the generic per-quote announcement (announceOnComplete=false) —
+  // a single richer one below covers both the "quote of the day" framing
+  // and the quote text itself, instead of firing both back to back.
+  displayQuoteWithTransition(quote, 0, true, null, false, null, false);
   showToast(`quote of the day — ${dateStr}`);
-  QuoteUtils.announceAction("Quote of the day");
+  QuoteUtils.announceAction(`Quote of the day — ${QuoteUtils.getTweetText(quote)}`);
 }
 
 // =========================================
@@ -2616,19 +2634,27 @@ function scheduleInterference() {
   const delay = minMs + Math.random() * (maxMs - minMs);
   clearTimeout(state.interferenceTimerId);
   state.interferenceTimerId = setTimeout(() => {
-    if (!document.hidden) {
-      document.body.classList.add("crt-interference");
-      document.body.addEventListener(
-        "animationend",
-        () => {
-          document.body.classList.remove("crt-interference");
-          scheduleInterference();
-        },
-        { once: true },
-      );
-    } else {
+    if (document.hidden) {
+      scheduleInterference();
+      return;
+    }
+    // Reduced motion strips the animation entirely (styles.css), so
+    // animationend would never fire — reschedule directly instead of
+    // waiting on an event that will never come.
+    if (config.performanceMode) {
+      scheduleInterference();
+      return;
+    }
+    document.body.classList.add("crt-interference");
+    function onAnimationEnd(event) {
+      // Other animations (help-hint, etc.) also bubble animationend to
+      // body — only react to this specific keyframe finishing.
+      if (event.animationName !== "crt-interference") return;
+      document.body.removeEventListener("animationend", onAnimationEnd);
+      document.body.classList.remove("crt-interference");
       scheduleInterference();
     }
+    document.body.addEventListener("animationend", onAnimationEnd);
   }, delay);
 }
 
@@ -2712,7 +2738,6 @@ function handleClick(event) {
     if (state.isTyping && !state.isPaused) {
       clearTimeout(state.timeoutId);
       displayQuote(state.currentQuote, state.currentIndex, true);
-      QuoteUtils.announceAction("Typing finished");
     } else if (state.parkTimeoutId) {
       clearTimeout(state.parkTimeoutId);
       state.parkTimeoutId = null;
