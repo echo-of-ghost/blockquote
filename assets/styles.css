@@ -1583,6 +1583,11 @@ body.quote-list-mode main {
   display: flex;
   align-items: center;
   gap: 0.15rem;
+  /* Match .help-trigger/.caps-indicator's line-height: 1 — without it this
+     inherits body's line-height: 1.6, making it taller than its .corner-ui
+     siblings and shifting the "?" down when align-items: center recenters
+     the row on this element's insertion/removal. */
+  line-height: 1;
 }
 
 .bookmark-counter .count::before {
