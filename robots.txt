@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://blockquotes.sh/sitemap.xml
+Sitemap: https://blockquote.sh/sitemap.xml

@@ -1,6 +1,6 @@
 # Blockquote.sh
 
-![blockquote.sh screenshot](assets/screenshot.png)
+![blockquote.sh screenshot](docs/screenshot.png)
 
 Welcome to blockquote.sh, a growing collection of Bitcoin and Bitcoin-related quotes rendered through historically accurate CRT terminal themes. Share your favourite quotes and contribute your own.
 

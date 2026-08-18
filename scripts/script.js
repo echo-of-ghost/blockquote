@@ -32,6 +32,17 @@ import {
   URL_PRELOAD_DELAY_MS,
 } from "./config.js";
 
+const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+
+/**
+ * Escapes HTML metacharacters in a plain-text string before it's interpolated
+ * into innerHTML. Quote/author/source text comes from the (potentially
+ * contributor-submitted) quotes JSON, not from trusted markup.
+ */
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, (c) => HTML_ESCAPES[c]);
+}
+
 // =========================================
 // RUNTIME CONFIG
 // =========================================
@@ -72,6 +83,8 @@ const state = {
   wheelTimeout: null,
   /** setTimeout ID for the long-press gesture */
   longPressTimer: null,
+  /** setTimeout ID for the next ambient CRT interference flash — self-rescheduling, lives for the page's whole lifetime */
+  interferenceTimerId: null,
   /** Quote currently on screen */
   currentQuote: null,
   /** Character position within the current typing pass */
@@ -751,6 +764,7 @@ export function updateLivePrompt() {
  * @param {string | null} [preformattedAuthor=null] - Pre-rendered author HTML.
  * @param {boolean} [skipHistory=false] - Don't add to navigation history.
  * @param {string | null} [preformattedSource=null] - Pre-rendered source HTML.
+ * @param {boolean} [announceOnComplete=true] - Announce the quote to screen readers once display finishes.
  */
 function displayQuoteWithTransition(
   quote,
@@ -759,6 +773,7 @@ function displayQuoteWithTransition(
   preformattedAuthor = null,
   skipHistory = false,
   preformattedSource = null,
+  announceOnComplete = true,
 ) {
   PerformanceUtils.cancelAllTimers();
   hidePositionIndicator();
@@ -772,6 +787,7 @@ function displayQuoteWithTransition(
     preformattedAuthor,
     skipHistory,
     preformattedSource,
+    announceOnComplete,
   );
 }
 
@@ -787,6 +803,7 @@ function displayQuoteWithTransition(
  * @param {string | null} [preformattedAuthor=null]
  * @param {boolean} [skipHistory=false]
  * @param {string | null} [preformattedSource=null]
+ * @param {boolean} [announceOnComplete=true] - Announce the quote to screen readers once display finishes.
  */
 function displayQuote(
   quote,
@@ -795,6 +812,7 @@ function displayQuote(
   preformattedAuthor = null,
   skipHistory = false,
   preformattedSource = null,
+  announceOnComplete = true,
 ) {
   if (!isValidQuote(quote)) {
     console.warn("Tried to display invalid quote:", quote);
@@ -863,7 +881,7 @@ function displayQuote(
         ? `<span class="source"> — <span class="source-text">${sourceHTML}</span></span>`
         : "";
       elements.quoteContainer.innerHTML =
-        `<span class="text-selected">${quoteText}</span>` +
+        `<span class="text-selected">${escapeHtml(quoteText)}</span>` +
         `<span class="author">${prompt ? prompt + " " : ""}<span class="author-name">${authorHTML}</span>${sourcePart} ` +
         `<span class="cursor-block" aria-hidden="true"></span></span>`;
       elements.quoteContainer.style.textTransform = state.isUppercase
@@ -881,6 +899,18 @@ function displayQuote(
     }
   }
 
+  /**
+   * Announces the finished quote once, on whichever completion path is hit.
+   * #quote-container is aria-live="off" (rapid per-character mutation during
+   * typing would otherwise spam screen readers), so this is the only
+   * announcement AT users get for this quote.
+   */
+  function announceCompletion() {
+    if (announceOnComplete) {
+      QuoteUtils.announceAction(QuoteUtils.getTweetText(quote));
+    }
+  }
+
   function typeQuote() {
     const msPerChar = QuoteUtils.getMsPerChar();
     const finishNow = finishImmediately || msPerChar === 0 || state.isPaused;
@@ -890,6 +920,7 @@ function displayQuote(
       state.currentIndex = quoteText.length;
       state.isTyping = false;
       state.isPaused = true;
+      announceCompletion();
       return;
     }
 
@@ -902,7 +933,7 @@ function displayQuote(
 
       const typedText = quoteText.slice(0, state.currentIndex + 1);
       elements.quoteContainer.innerHTML =
-        `<span class="text-selected">${typedText}</span>` +
+        `<span class="text-selected">${escapeHtml(typedText)}</span>` +
         `<span class="cursor-block" aria-hidden="true"></span>`;
 
       PerformanceUtils.handleAutoScroll();
@@ -929,8 +960,8 @@ function displayQuote(
       const typedAuthor = authorTypingText.slice(0, authorIndex + 1);
 
       elements.quoteContainer.innerHTML =
-        `<span class="text-selected">${quoteText}</span>` +
-        `<span class="author">${typedAuthor}<span class="cursor-block" aria-hidden="true"></span></span>`;
+        `<span class="text-selected">${escapeHtml(quoteText)}</span>` +
+        `<span class="author">${escapeHtml(typedAuthor)}<span class="cursor-block" aria-hidden="true"></span></span>`;
 
       elements.quoteContainer.style.textTransform = state.isUppercase
         ? "uppercase"
@@ -954,6 +985,7 @@ function displayQuote(
       renderParked();
       state.isTyping = false;
       state.isPaused = true;
+      announceCompletion();
 
       state.parkTimeoutId = setTimeout(() => {
         state.parkTimeoutId = null;
@@ -1938,7 +1970,7 @@ function renderC64Directory() {
       .toUpperCase()
       .slice(0, 16);
     const name = `"${rawAuthor}"`.padEnd(20);
-    const line = `${blocks} ${name}   PRG`;
+    const line = escapeHtml(`${blocks} ${name}   PRG`);
     return i === selected
       ? `<span class="text-selected">${line}</span>`
       : `<span>${line}</span>`;
@@ -1975,7 +2007,7 @@ function renderAppleIICatalog() {
       .trim();
     const truncAuthor =
       rawAuthor.length > 22 ? rawAuthor.slice(0, 22) + "\u2026" : rawAuthor;
-    const line = ` T ${sectors} ${truncAuthor}`;
+    const line = escapeHtml(` T ${sectors} ${truncAuthor}`);
     return i === selected
       ? `<span class="text-selected">${line}</span>`
       : `<span>${line}</span>`;
@@ -2580,9 +2612,12 @@ function showQuoteOfTheDay() {
   const now = new Date();
   const dateStr = now.toISOString().slice(0, 10); // YYYY-MM-DD UTC
   state.isPaused = false;
-  displayQuoteWithTransition(quote, 0, true);
+  // Suppress the generic per-quote announcement (announceOnComplete=false) —
+  // a single richer one below covers both the "quote of the day" framing
+  // and the quote text itself, instead of firing both back to back.
+  displayQuoteWithTransition(quote, 0, true, null, false, null, false);
   showToast(`quote of the day — ${dateStr}`);
-  QuoteUtils.announceAction("Quote of the day");
+  QuoteUtils.announceAction(`Quote of the day — ${QuoteUtils.getTweetText(quote)}`);
 }
 
 // =========================================
@@ -2597,20 +2632,29 @@ function scheduleInterference() {
   const minMs = 3 * 60 * 1000;
   const maxMs = 7 * 60 * 1000;
   const delay = minMs + Math.random() * (maxMs - minMs);
-  setTimeout(() => {
-    if (!document.hidden) {
-      document.body.classList.add("crt-interference");
-      document.body.addEventListener(
-        "animationend",
-        () => {
-          document.body.classList.remove("crt-interference");
-          scheduleInterference();
-        },
-        { once: true },
-      );
-    } else {
+  clearTimeout(state.interferenceTimerId);
+  state.interferenceTimerId = setTimeout(() => {
+    if (document.hidden) {
+      scheduleInterference();
+      return;
+    }
+    // Reduced motion strips the animation entirely (styles.css), so
+    // animationend would never fire — reschedule directly instead of
+    // waiting on an event that will never come.
+    if (config.performanceMode) {
+      scheduleInterference();
+      return;
+    }
+    document.body.classList.add("crt-interference");
+    function onAnimationEnd(event) {
+      // Other animations (help-hint, etc.) also bubble animationend to
+      // body — only react to this specific keyframe finishing.
+      if (event.animationName !== "crt-interference") return;
+      document.body.removeEventListener("animationend", onAnimationEnd);
+      document.body.classList.remove("crt-interference");
       scheduleInterference();
     }
+    document.body.addEventListener("animationend", onAnimationEnd);
   }, delay);
 }
 
@@ -2694,7 +2738,6 @@ function handleClick(event) {
     if (state.isTyping && !state.isPaused) {
       clearTimeout(state.timeoutId);
       displayQuote(state.currentQuote, state.currentIndex, true);
-      QuoteUtils.announceAction("Typing finished");
     } else if (state.parkTimeoutId) {
       clearTimeout(state.parkTimeoutId);
       state.parkTimeoutId = null;
