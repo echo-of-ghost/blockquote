@@ -1710,7 +1710,7 @@ function renderSearchPrompt() {
 function handleSearchKey(event) {
   const key = event.key;
   if (key === "Escape") {
-    exitSearchMode(false);
+    exitSearchMode();
   } else if (key === "Enter") {
     commitSearch();
   } else if (key === "Backspace") {
@@ -1728,7 +1728,7 @@ function handleSearchKey(event) {
  */
 function commitSearch() {
   const query = state.searchQuery.toLowerCase().trim();
-  exitSearchMode(true);
+  exitSearchMode();
   if (!query || !state.quotes) return;
 
   // Easter eggs — theme-locked
@@ -1773,18 +1773,21 @@ function commitSearch() {
 }
 
 /**
- * Exits search mode.
- *
- * @param {boolean} keepToast - When true, leaves any active toast visible (e.g. match count).
+ * Exits search mode. Always hides the status line immediately — any
+ * follow-up message (match count, "no match", etc.) calls showToast()
+ * separately, which re-shows it with fresh content in the same tick, so
+ * there's no visible flicker. Leaving the old search-prompt text up
+ * instead (as this used to do for commitSearch()) meant it could linger
+ * indefinitely whenever nothing happened to call showToast() afterward —
+ * a single search match, or the satoshi/stats easter eggs, whose own
+ * toast only fires after their multi-second typing animation finishes.
  */
-function exitSearchMode(keepToast = false) {
+function exitSearchMode() {
   state.searchMode = false;
   state.searchQuery = "";
   document.body.classList.remove("search-mode");
-  if (!keepToast) {
-    const el = document.querySelector(".bq-status");
-    if (el) el.classList.add("hidden");
-  }
+  const el = document.querySelector(".bq-status");
+  if (el) el.classList.add("hidden");
 }
 
 // =========================================
@@ -2711,7 +2714,7 @@ function handleClick(event) {
     return;
   }
   if (state.searchMode) {
-    exitSearchMode(false);
+    exitSearchMode();
     return;
   }
 
@@ -2842,6 +2845,9 @@ function handleKeyPress(event) {
     return;
   }
   if (event.key === "/") {
+    // Firefox binds "/" to its built-in Quick Find by default — without
+    // this, Firefox's own find bar pops up alongside our search prompt.
+    event.preventDefault();
     enterSearchMode();
     return;
   }
@@ -2895,6 +2901,20 @@ function handleSwipeEnd(event) {
     state.longPressTimer = null;
   }
 
+  // Same mode intercepts as handleKeyPress/handleWheelNavigation — without
+  // these, swiping while e.g. the CATALOG/LOAD"$",8 quote-list view or the
+  // help screen is open advances/rewinds real quotes underneath it.
+  if (
+    state.booting ||
+    state.helpMode ||
+    state.searchMode ||
+    state.bookmarkListMode ||
+    state.quoteListMode ||
+    state.clockMode
+  ) {
+    return;
+  }
+
   const touchDuration = Date.now() - state.touchStartTime;
   if (!event.changedTouches || event.changedTouches.length !== 1) return;
   if (touchDuration >= LONG_PRESS_MS) return;
@@ -2942,6 +2962,33 @@ function handleSwipeEnd(event) {
  * @param {WheelEvent} event
  */
 function handleWheelNavigation(event) {
+  // Same mode intercepts as handleKeyPress — without these, scrolling while
+  // e.g. the CATALOG/LOAD"$",8 quote-list view is open (which sets
+  // isPaused=true, isTyping=false, same as the parked state a normal wheel
+  // scroll acts on) advances/rewinds real quotes underneath the listing.
+  if (
+    state.booting ||
+    state.helpMode ||
+    state.searchMode ||
+    state.bookmarkListMode ||
+    state.quoteListMode ||
+    state.clockMode
+  ) {
+    // Discard queued wheel state too — not just this event. A gesture that
+    // started before the modal opened can leave a pending debounce timer
+    // (enterSearchMode() doesn't call cancelAllTimers(), so this is the
+    // only place that clears it) and/or accumulated wheelDelta (the other
+    // modal entry points do clear the timer via cancelAllTimers(), but
+    // never reset wheelDelta) — either would otherwise let a leftover
+    // gesture fire once the modal closes.
+    state.wheelDelta = 0;
+    if (state.wheelTimeout) {
+      clearTimeout(state.wheelTimeout);
+      state.wheelTimeout = null;
+    }
+    return;
+  }
+
   const currentTime = Date.now();
   if (currentTime - state.lastWheelTime < WHEEL_COOLDOWN_MS) return;
   if (state.isTyping || state.isProcessing) return;
@@ -2952,6 +2999,19 @@ function handleWheelNavigation(event) {
 
   state.wheelTimeout = setTimeout(() => {
     state.wheelTimeout = null;
+    // Re-check — a modal can open during the debounce window itself
+    // (most importantly enterSearchMode(), which never clears this timer).
+    if (
+      state.booting ||
+      state.helpMode ||
+      state.searchMode ||
+      state.bookmarkListMode ||
+      state.quoteListMode ||
+      state.clockMode
+    ) {
+      state.wheelDelta = 0;
+      return;
+    }
     if (Math.abs(state.wheelDelta) >= WHEEL_THRESHOLD) {
       state.lastWheelTime = Date.now();
 
