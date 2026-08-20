@@ -2974,6 +2974,18 @@ function handleWheelNavigation(event) {
     state.quoteListMode ||
     state.clockMode
   ) {
+    // Discard queued wheel state too — not just this event. A gesture that
+    // started before the modal opened can leave a pending debounce timer
+    // (enterSearchMode() doesn't call cancelAllTimers(), so this is the
+    // only place that clears it) and/or accumulated wheelDelta (the other
+    // modal entry points do clear the timer via cancelAllTimers(), but
+    // never reset wheelDelta) — either would otherwise let a leftover
+    // gesture fire once the modal closes.
+    state.wheelDelta = 0;
+    if (state.wheelTimeout) {
+      clearTimeout(state.wheelTimeout);
+      state.wheelTimeout = null;
+    }
     return;
   }
 
@@ -2987,6 +2999,19 @@ function handleWheelNavigation(event) {
 
   state.wheelTimeout = setTimeout(() => {
     state.wheelTimeout = null;
+    // Re-check — a modal can open during the debounce window itself
+    // (most importantly enterSearchMode(), which never clears this timer).
+    if (
+      state.booting ||
+      state.helpMode ||
+      state.searchMode ||
+      state.bookmarkListMode ||
+      state.quoteListMode ||
+      state.clockMode
+    ) {
+      state.wheelDelta = 0;
+      return;
+    }
     if (Math.abs(state.wheelDelta) >= WHEEL_THRESHOLD) {
       state.lastWheelTime = Date.now();
 
