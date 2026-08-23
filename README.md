@@ -62,6 +62,10 @@ Welcome to blockquote.sh, a growing collection of Bitcoin and Bitcoin-related qu
 - **URL Quote Loading** — Shared links open directly to the correct quote
 - **Clock Mode** — Full-screen phosphor clock via `W`; any key exits
 
+### Tipping
+
+- **Lightning / Bitcoin Header Icons** — WebLN wallets pay silently in one click; mobile hands off to your wallet app; desktop shows a full-screen scannable QR code (mirrors Clock Mode's takeover) with the LNURL/address also copied to your clipboard
+
 ### Easter Eggs
 
 - **`LOAD "$",8`** — On Commodore 64 or PET 2001 theme, shows a C64-style disk directory listing of all quotes
