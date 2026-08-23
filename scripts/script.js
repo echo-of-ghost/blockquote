@@ -125,6 +125,8 @@ const state = {
   clockMode: false,
   /** setInterval ID for the clock tick */
   clockIntervalId: null,
+  /** True while a Lightning/Bitcoin tip QR code is displayed (desktop only) */
+  qrMode: false,
   /** True when the bookmark list view is active */
   bookmarkListMode: false,
   /** Currently highlighted bookmark index in list view */
@@ -1669,6 +1671,163 @@ function exitClockMode() {
 }
 
 // =========================================
+// TIP QR CODES (Lightning / Bitcoin) — desktop only
+// =========================================
+
+/*
+ * Same path data as the header's .bolt-link/.btc-link SVGs in index.html —
+ * kept in sync manually since one lives in static markup and the other is
+ * built at runtime. fill="currentColor" so both pick up the theme colour
+ * like everything else on the page, rather than an emoji glyph (⚡ renders
+ * with its own fixed yellow, ignoring CSS colour entirely).
+ */
+const QR_BOLT_ICON_SVG =
+  '<svg class="qr-label-icon" viewBox="0 0 448 512" fill="currentColor" aria-hidden="true"><path d="M349.4 44.6c5.9-13.7 1.5-29.7-10.6-38.5s-28.6-8-39.9 1.8l-256 224c-10 8.8-13.6 22.9-8.9 35.3S50.7 288 64 288H175.5L98.6 467.4c-5.9 13.7-1.5 29.7 10.6 38.5s28.6 8 39.9-1.8l256-224c10-8.8 13.6-22.9 8.9-35.3s-16.6-20.7-30-20.7H272.5L349.4 44.6z"/></svg>';
+const QR_BTC_ICON_SVG =
+  '<svg class="qr-label-icon" viewBox="0 0 512 512" fill="currentColor" aria-hidden="true"><path d="M504 256c0 136.967-111.033 248-248 248S8 392.967 8 256 119.033 8 256 8s248 111.033 248 248zm-141.651-35.33c4.937-32.999-20.191-50.739-54.55-62.573l11.146-44.702-27.213-6.781-10.851 43.524c-7.154-1.783-14.502-3.464-21.803-5.13l10.929-43.81-27.198-6.781-11.153 44.686c-5.922-1.349-11.735-2.682-17.377-4.084l.031-.14-37.53-9.37-7.239 29.062s20.191 4.627 19.765 4.913c11.022 2.751 13.014 10.044 12.68 15.825l-12.696 50.925c.76.194 1.744.473 2.829.907-.907-.225-1.876-.473-2.876-.713l-17.796 71.338c-1.349 3.348-4.767 8.37-12.471 6.464.271.395-19.78-4.937-19.78-4.937l-13.51 31.147 35.414 8.827c6.588 1.651 13.045 3.379 19.4 5.006l-11.262 45.213 27.182 6.781 11.153-44.733a1038.209 1038.209 0 0 0 21.687 5.627l-11.115 44.523 27.213 6.781 11.262-45.128c46.404 8.781 81.299 5.239 95.986-36.727 11.836-33.79-.589-53.281-25.004-65.991 17.78-4.098 31.174-15.792 34.747-39.949zm-62.177 87.179c-8.41 33.79-65.308 15.523-83.755 10.943l14.944-59.899c18.446 4.603 77.6 13.717 68.811 48.956zm8.417-87.667c-7.673 30.736-55.031 15.12-70.393 11.292l13.548-54.327c15.363 3.828 64.836 10.973 56.845 43.035z"/></svg>';
+
+/**
+ * Renders a scannable QR code as an inline SVG.
+ *
+ * Explicit white background with theme-primary-colour modules — phosphor
+ * green/amber on a near-black page background would risk poor real-world
+ * scan contrast on a phone camera, so this keeps the standard dark-modules-
+ * on-light-background polarity most scanners assume — but the background
+ * isn't pure white either. It's a pale tint of the theme's own
+ * --primary-color (see getQRBackgroundColor()), so it reads as "ink on
+ * tinted paper in this theme's colour" rather than a stark white square
+ * dropped into a CRT terminal, while staying light enough to keep the
+ * safe polarity and strong contrast against the full-saturation modules.
+ * shape-rendering: crispEdges avoids anti-aliasing blur between adjacent
+ * modules, and the 4-module quiet zone matches the QR spec's minimum for
+ * reliable scanning.
+ *
+ * @param {object} qr - A made qrcode() instance (see vendor/qrcode.js).
+ * @returns {string} SVG markup.
+ */
+function buildQRSvg(qr) {
+  const quietZone = 4;
+  const count = qr.getModuleCount();
+  const size = count + quietZone * 2;
+  let modules = "";
+  for (let row = 0; row < count; row++) {
+    for (let col = 0; col < count; col++) {
+      if (qr.isDark(row, col)) {
+        modules += `<rect x="${col + quietZone}" y="${row + quietZone}" width="1" height="1"/>`;
+      }
+    }
+  }
+  return (
+    `<svg class="qr-code-svg" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges" role="img" aria-label="QR code">` +
+    `<rect width="${size}" height="${size}" fill="${getQRBackgroundColor()}"/>` +
+    `<g fill="var(--primary-color)">${modules}</g>` +
+    `</svg>`
+  );
+}
+
+/**
+ * A pale tint of the active theme's --primary-color, blended toward white.
+ * Computed in JS (reading --primary-rgb via getComputedStyle, same
+ * technique changeTheme() already uses for --theme-background) rather than
+ * CSS color-mix() — this is the one element on the page where scan
+ * reliability matters more than anything else, so it shouldn't depend on
+ * a newer CSS color function some browsers/scanners' embedded webviews
+ * might not support.
+ *
+ * @returns {string} An rgb(...) colour, ~92% white / 8% theme primary colour.
+ */
+function getQRBackgroundColor() {
+  const FALLBACK = "rgb(245, 245, 240)";
+  const rgbStr = getComputedStyle(document.body)
+    .getPropertyValue("--primary-rgb")
+    .trim();
+  const parts = rgbStr.split(",").map((n) => parseInt(n.trim(), 10));
+  if (parts.length !== 3 || parts.some((n) => Number.isNaN(n))) return FALLBACK;
+
+  const TINT = 0.08;
+  const [r, g, b] = parts.map((channel) =>
+    Math.round(channel * TINT + 255 * (1 - TINT)),
+  );
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+/**
+ * Shows a full-screen tip QR code, mirroring clock mode's full-screen
+ * takeover. Desktop only — mobile hands off to a wallet app directly via
+ * the lightning:/bitcoin: URI instead (see LightningTip/BitcoinTip below).
+ *
+ * The QR code and address are wrapped in a real link to walletUri — desktop
+ * wallets that register as the OS handler for lightning:/bitcoin: (Sparrow,
+ * Zeus Desktop, etc.) can be reached with one click, same as the QR/address
+ * serve everyone else. Clicking or Enter-ing that specific link opens the
+ * wallet app WITHOUT closing the QR (see the .qr-tip-link exceptions in
+ * handleClick/handleKeyPress) — anywhere else, any key or click exits, same
+ * as clock mode.
+ *
+ * @param {string} qrData - The exact string to encode (bare LNURL, or a full bitcoin: URI).
+ * @param {string} walletUri - lightning:/bitcoin: URI for the click-to-open link.
+ * @param {string} iconSvg - Trusted SVG markup (QR_BOLT_ICON_SVG/QR_BTC_ICON_SVG) — not escaped.
+ * @param {string} labelText - Short label next to the icon, e.g. "lightning tip".
+ * @param {string} displayText - Human-readable address/LNURL shown as text under the code.
+ */
+async function enterQRMode(qrData, walletUri, iconSvg, labelText, displayText) {
+  if (state.booting || state.qrMode) return;
+  PerformanceUtils.cancelAllTimers();
+  hidePositionIndicator();
+  state.qrMode = true;
+  state.isPaused = true;
+  state.isTyping = false;
+  document.body.classList.add("qr-mode");
+  elements.quoteContainer.innerHTML = `<div class="qr-loading">generating QR…</div>`;
+
+  try {
+    // Dynamically imported — this ~60KB encoder is only worth fetching for
+    // the minority of visits that actually click a tip icon, not eagerly
+    // on every page load.
+    const { qrcode } = await import("./vendor/qrcode.js");
+    if (!state.qrMode) return; // exited (e.g. pressed a key) before this resolved
+    const qr = qrcode(0, "M");
+    qr.addData(qrData);
+    qr.make();
+    elements.quoteContainer.innerHTML =
+      `<a class="qr-tip-link qr-reveal" href="${escapeHtml(walletUri)}" aria-label="Open ${escapeHtml(labelText)} in your wallet app">` +
+      buildQRSvg(qr) +
+      `<div class="qr-label">${iconSvg}<span>${escapeHtml(labelText)}</span></div>` +
+      `</a>` +
+      `<button type="button" class="qr-address qr-reveal" aria-label="Copy ${escapeHtml(labelText)} address to clipboard">` +
+      `${escapeHtml(displayText)}</button>`;
+    showToast("click QR to pay · address to copy");
+    QuoteUtils.announceAction(
+      `${labelText} QR code displayed. Tab to the link and press Enter to open ` +
+        `your wallet app, or tab to the address and press Enter to copy it. ` +
+        `Press any other key to close.`,
+    );
+  } catch (e) {
+    console.error("Error generating QR code:", e, { qrData });
+    exitQRMode();
+    showToast("QR generation failed");
+  }
+}
+
+/**
+ * Exits QR mode. Restores the quote that was showing when tip mode opened
+ * (state.currentQuote, untouched by enterQRMode) rather than jumping to a
+ * new random one — someone tipping mid-read shouldn't lose the quote they
+ * were tipping for.
+ */
+function exitQRMode() {
+  state.qrMode = false;
+  state.isPaused = false;
+  document.body.classList.remove("qr-mode");
+  if (state.currentQuote) {
+    displayQuoteWithTransition(state.currentQuote, 0, true, null, true);
+  } else {
+    elements.quoteContainer.innerHTML = `<span class="cursor-block" aria-hidden="true"></span>`;
+    setRandomQuote();
+  }
+}
+
+// =========================================
 // VIM-STYLE SEARCH  ( / )
 // =========================================
 
@@ -2480,14 +2639,14 @@ function exportBookmarksAsJSON() {
 // =========================================
 
 /*
-  Three-tier Lightning experience — no UI chrome, no modal.
+  Three-tier Lightning experience.
 
   Tier 1 — WebLN (Alby, Zeus, etc.): silent payment via browser extension.
   Tier 2 — Mobile, no WebLN: native wallet handoff via lightning: URI.
-  Tier 3 — Desktop, no WebLN: copy LNURL to clipboard, confirm via toast.
-
-  The toast is the entire UI. People who know Lightning know what to do
-  with an LNURL. People who don't aren't the audience for this button.
+  Tier 3 — Desktop, no WebLN: full-screen scannable QR (enterQRMode(),
+           mirrors clock mode) — click/Enter the code to open a desktop
+           wallet app directly, or click the LNURL text under it to copy.
+           No clipboard write until the user explicitly asks for one.
 */
 const LightningTip = (() => {
   /** @returns {string | null} The LNURL from the bolt link's href, uppercased. */
@@ -2531,11 +2690,7 @@ const LightningTip = (() => {
     if (isMobile) return; // Let the lightning: href fire natively
 
     event.preventDefault();
-    const short = lnurl.slice(0, 18) + "…";
-    navigator.clipboard
-      .writeText(lnurl)
-      .then(() => showToast(`⚡ ${short} [copied]`))
-      .catch(() => showToast("⚡ copy failed"));
+    enterQRMode(lnurl, `lightning:${lnurl}`, QR_BOLT_ICON_SVG, "lightning tip", lnurl);
   }
 
   return { handleBoltClick };
@@ -2549,7 +2704,10 @@ const LightningTip = (() => {
   Two-tier Bitcoin on-chain experience — mirrors Lightning pattern.
 
   Tier 1 — Mobile: native wallet handoff via bitcoin: URI.
-  Tier 2 — Desktop: copy address to clipboard, confirm via status line.
+  Tier 2 — Desktop: full-screen scannable QR (enterQRMode(), mirrors clock
+           mode) encoding the BIP21 bitcoin: URI — click/Enter the code to
+           open a desktop wallet app directly, or click the address text
+           under it to copy. No clipboard write until explicitly asked for.
 */
 const BitcoinTip = (() => {
   /** @returns {string | null} The Bitcoin address from the btc link's href. */
@@ -2573,11 +2731,7 @@ const BitcoinTip = (() => {
     if (isMobile) return; // Let the bitcoin: href fire natively
 
     event.preventDefault();
-    const short = address.slice(0, 10) + "…" + address.slice(-4);
-    navigator.clipboard
-      .writeText(address)
-      .then(() => showToast(`₿ ${short} [copied]`))
-      .catch(() => showToast("₿ copy failed"));
+    enterQRMode(`bitcoin:${address}`, `bitcoin:${address}`, QR_BTC_ICON_SVG, "bitcoin tip", address);
   }
 
   return { handleBtcClick };
@@ -2701,6 +2855,26 @@ function handleClick(event) {
     exitHelp();
     return;
   }
+  if (state.qrMode) {
+    // Let a click on the wallet-app link through untouched — it should
+    // open the wallet via its lightning:/bitcoin: href, not close the QR
+    // out from under it.
+    if (event.target.closest(".qr-tip-link")) return;
+    // The address button copies itself — an explicit, separate action from
+    // opening the wallet link above. Only copies on deliberate click/Enter,
+    // never automatically.
+    const copyBtn = event.target.closest(".qr-address");
+    if (copyBtn) {
+      navigator.clipboard
+        .writeText(copyBtn.textContent)
+        .then(() => showToast("copied to clipboard"))
+        .catch(() => showToast("copy failed"));
+      return;
+    }
+    // Anywhere else in QR mode still closes as normal.
+    exitQRMode();
+    return;
+  }
   if (state.clockMode) {
     exitClockMode();
     return;
@@ -2792,6 +2966,19 @@ function handleKeyPress(event) {
   }
   if (state.clockMode) {
     exitClockMode();
+    return;
+  }
+  if (state.qrMode) {
+    // Enter/Space on the focused wallet-app link or address button should
+    // activate it (open the wallet / copy the address), not close the QR
+    // out from under it. Every other key still closes, same as clock mode.
+    const activeEl = document.activeElement;
+    const activatingQRControl =
+      (event.key === "Enter" || event.key === " ") &&
+      (activeEl?.classList.contains("qr-tip-link") ||
+        activeEl?.classList.contains("qr-address"));
+    if (activatingQRControl) return;
+    exitQRMode();
     return;
   }
 
@@ -2910,7 +3097,8 @@ function handleSwipeEnd(event) {
     state.searchMode ||
     state.bookmarkListMode ||
     state.quoteListMode ||
-    state.clockMode
+    state.clockMode ||
+    state.qrMode
   ) {
     return;
   }
@@ -2972,7 +3160,8 @@ function handleWheelNavigation(event) {
     state.searchMode ||
     state.bookmarkListMode ||
     state.quoteListMode ||
-    state.clockMode
+    state.clockMode ||
+    state.qrMode
   ) {
     // Discard queued wheel state too — not just this event. A gesture that
     // started before the modal opened can leave a pending debounce timer
@@ -3007,7 +3196,8 @@ function handleWheelNavigation(event) {
       state.searchMode ||
       state.bookmarkListMode ||
       state.quoteListMode ||
-      state.clockMode
+      state.clockMode ||
+      state.qrMode
     ) {
       state.wheelDelta = 0;
       return;

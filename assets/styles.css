@@ -1505,6 +1505,162 @@ body.clock-mode #quote-container {
 }
 
 /* =========================================
+   QR MODE — Lightning/Bitcoin tip QR codes
+   Desktop only (LightningTip/BitcoinTip skip this on mobile, letting the
+   lightning:/bitcoin: URI hand off to a wallet app instead). Mirrors clock
+   mode's full-screen takeover of #quote-container.
+   ========================================= */
+
+body.qr-mode main {
+  justify-content: center;
+  align-items: center;
+  padding-bottom: 0;
+}
+
+body.qr-mode #quote-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.2rem;
+  padding: 0;
+  text-align: center;
+}
+
+.qr-loading {
+  color: var(--primary-color);
+  font-size: clamp(1rem, 1.5vw + 0.5rem, 1.4rem);
+  letter-spacing: 0.05em;
+  opacity: 0.7;
+}
+
+/* Fade-in for the QR/label/address once they replace the loading text,
+   instead of the content just cutting in instantly. Applied to
+   .qr-tip-link and .qr-address independently (both are top-level siblings
+   of #quote-container) rather than a wrapper, so it doesn't disturb the
+   flex layout above. Deliberately just opacity, one property, one smooth
+   curve, no held plateau or brightness pulse — a two-stage animation
+   (brightness held flat while opacity ramps, then dropped after) read as
+   two disconnected motions stitched together rather than one continuous
+   bloom. Never touches the QR's own module/background colours once at
+   rest, so it carries none of the scan-contrast risk an actual rendering
+   change would. */
+@keyframes qr-bloom-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.qr-reveal {
+  animation: qr-bloom-in 0.4s ease-in-out both;
+}
+
+/* The QR + label are one link (href = the lightning:/bitcoin: URI) —
+   desktop wallets registered as the OS handler for that scheme can be
+   reached in one click/Enter, same target the QR itself serves for
+   everyone else. Reset the usual <a> look (no blue, no underline) since
+   visually this should read exactly like the static view did; hover/focus
+   give it the same phosphor-brightening affordance as the header icons so
+   it still reads as interactive. The address (.qr-address, below) is a
+   deliberately separate control, not nested in here — copying is its own
+   explicit action, not a side effect of opening this link. */
+.qr-tip-link {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.2rem;
+  color: inherit;
+  text-decoration: none;
+  border-radius: 4px;
+  transition: filter 0.2s ease;
+}
+
+.qr-tip-link:hover,
+.qr-tip-link:focus-visible {
+  filter: brightness(1.15);
+  outline: none;
+}
+
+/* Instant flash in on press, eased fade back out on release via the base
+   rule's transition above — same "fast in, slow out" phosphor language as
+   .header-icon:active. */
+.qr-tip-link:active {
+  filter: brightness(1.35);
+  transition: filter 0s;
+}
+
+.qr-code-svg {
+  width: min(60vw, 60vh, 360px);
+  height: min(60vw, 60vh, 360px);
+  border-radius: 4px;
+  /* Deliberately no phosphor glow/text-shadow here, unlike everything
+     else on the page — this needs to read as flat printed ink for
+     reliable real-world scan contrast, not a glowing screen. */
+}
+
+.qr-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--primary-color);
+  font-size: clamp(1rem, 1.5vw + 0.5rem, 1.4rem);
+  letter-spacing: 0.05em;
+  text-shadow: 0 0 4px rgba(var(--primary-rgb), calc(var(--glow-intensity) * 0.5));
+}
+
+.qr-label-icon {
+  width: 1em;
+  height: 1em;
+  /* Explicit fill, not just the inline fill="currentColor" attribute — a
+     stylesheet rule beats a presentation attribute in the cascade, so this
+     guarantees the icon matches --primary-color exactly, the same value
+     .qr-label's `color` above gives the adjacent text, regardless of any
+     currentColor-inheritance edge case. */
+  fill: var(--primary-color);
+  filter: drop-shadow(0 0 4px rgba(var(--primary-rgb), calc(var(--glow-intensity) * 0.5)));
+}
+
+/* Click-to-copy, separate from .qr-tip-link above — a real <button>, not a
+   styled <div>, so Enter/Space/click all activate it natively with no
+   extra JS wiring beyond the copy action itself. Reset button chrome back
+   to plain text so it still reads exactly like the static address line
+   did before this was interactive. */
+.qr-address {
+  background: none;
+  border: none;
+  padding: 0.3rem;
+  margin: 0;
+  font-family: var(--font-family);
+  cursor: pointer;
+  max-width: min(90vw, 32rem);
+  font-size: clamp(0.7rem, 0.9vw + 0.3rem, 0.9rem);
+  color: inherit;
+  word-break: break-all;
+  opacity: 0.6;
+  border-radius: 4px;
+  transition:
+    opacity 0.2s ease,
+    filter 0.2s ease;
+}
+
+.qr-address:hover,
+.qr-address:focus-visible {
+  opacity: 0.85;
+  filter: brightness(1.15);
+  outline: none;
+}
+
+.qr-address:active {
+  opacity: 1;
+  filter: brightness(1.35);
+  transition:
+    opacity 0s,
+    filter 0s;
+}
+
+/* =========================================
    QUOTE LIST MODE (easter egg C64 / Apple II)
    ========================================= */
 
@@ -1882,6 +2038,11 @@ body.theme-zenith-green .caps-indicator {
   }
   main {
     transform: none !important;
+  }
+  /* No QR bloom-in — appears at full opacity instantly */
+  .qr-reveal {
+    animation: none !important;
+    opacity: 1 !important;
   }
 }
 
