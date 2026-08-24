@@ -1689,15 +1689,22 @@ const QR_BTC_ICON_SVG =
 /**
  * Renders a scannable QR code as an inline SVG.
  *
- * Explicit white background with theme-primary-colour modules — phosphor
- * green/amber on a near-black page background would risk poor real-world
- * scan contrast on a phone camera, so this keeps the standard dark-modules-
- * on-light-background polarity most scanners assume — but the background
- * isn't pure white either. It's a pale tint of the theme's own
- * --primary-color (see getQRBackgroundColor()), so it reads as "ink on
- * tinted paper in this theme's colour" rather than a stark white square
- * dropped into a CRT terminal, while staying light enough to keep the
- * safe polarity and strong contrast against the full-saturation modules.
+ * Background is the theme's own --theme-background (near-black, same as
+ * the page itself — no white anywhere), modules are the full-saturation
+ * --primary-color — light modules on a dark background, an explicit,
+ * deliberate choice to keep the QR fully in the theme's own palette rather
+ * than a white/light square dropped into a dark CRT terminal.
+ *
+ * Trade-off worth knowing: this is the *inverted* polarity from the
+ * dark-modules-on-light-background convention most QR scanners are tuned
+ * for. Modern decoders (iOS/Android native camera scanners, most current
+ * libraries) threshold on contrast and handle either polarity fine, and
+ * the raw luminance contrast here is strong on every theme (near-black vs.
+ * a bright phosphor colour) — but a handful of older or simpler scanner
+ * apps assume conventional polarity and may struggle. Chosen deliberately
+ * over a light-background version to keep every theme's QR looking like
+ * that theme, not a generic light square.
+ *
  * shape-rendering: crispEdges avoids anti-aliasing blur between adjacent
  * modules, and the 4-module quiet zone matches the QR spec's minimum for
  * reliable scanning.
@@ -1719,36 +1726,10 @@ function buildQRSvg(qr) {
   }
   return (
     `<svg class="qr-code-svg" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges" role="img" aria-label="QR code">` +
-    `<rect width="${size}" height="${size}" fill="${getQRBackgroundColor()}"/>` +
+    `<rect width="${size}" height="${size}" fill="var(--theme-background)"/>` +
     `<g fill="var(--primary-color)">${modules}</g>` +
     `</svg>`
   );
-}
-
-/**
- * A pale tint of the active theme's --primary-color, blended toward white.
- * Computed in JS (reading --primary-rgb via getComputedStyle, same
- * technique changeTheme() already uses for --theme-background) rather than
- * CSS color-mix() — this is the one element on the page where scan
- * reliability matters more than anything else, so it shouldn't depend on
- * a newer CSS color function some browsers/scanners' embedded webviews
- * might not support.
- *
- * @returns {string} An rgb(...) colour, ~92% white / 8% theme primary colour.
- */
-function getQRBackgroundColor() {
-  const FALLBACK = "rgb(245, 245, 240)";
-  const rgbStr = getComputedStyle(document.body)
-    .getPropertyValue("--primary-rgb")
-    .trim();
-  const parts = rgbStr.split(",").map((n) => parseInt(n.trim(), 10));
-  if (parts.length !== 3 || parts.some((n) => Number.isNaN(n))) return FALLBACK;
-
-  const TINT = 0.08;
-  const [r, g, b] = parts.map((channel) =>
-    Math.round(channel * TINT + 255 * (1 - TINT)),
-  );
-  return `rgb(${r}, ${g}, ${b})`;
 }
 
 /**
