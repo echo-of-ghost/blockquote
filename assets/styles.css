@@ -1565,17 +1565,18 @@ body.qr-mode #quote-container {
 
    Hover/focus/active affordance is scoped to .qr-label ONLY (below), never
    to .qr-tip-link itself or .qr-code-svg — filter on this element would
-   apply to its whole rendered subtree, QR included. On themes with a
-   light/near-white primary colour (NeXTSTEP's P4 grayscale, VT05 white)
-   the QR background is already a pale tint close to white and the modules
-   aren't far off it either; brightening the whole link on hover washed
-   both toward white together and erased the QR's contrast entirely —
-   invisible on exactly the two themes it needs contrast most. Saturated
-   themes (green/amber/etc.) never showed the problem, which is why it
-   shipped once and only surfaced after merge. The address (.qr-address,
-   below) is a deliberately separate control, not nested in here —
-   copying is its own explicit action, not a side effect of opening this
-   link. */
+   apply to its whole rendered subtree, QR included. The QR's colours
+   (--theme-background behind it, --primary-color for the modules — see
+   buildQRSvg() in script.js) are chosen specifically to keep every theme's
+   QR scannable; a filter reapplied here on hover would alter that
+   regardless of which two theme colours happen to be in play. Not
+   theoretical: an earlier version tinted the background toward white
+   instead, and brightening the whole link on hover pushed the two
+   near-white-primary themes (NeXTSTEP, VT05) to washed-out invisibility —
+   exactly why this stays scoped to .qr-label rather than the link. The
+   address (.qr-address, below) is a deliberately separate control, not
+   nested in here — copying is its own explicit action, not a side effect
+   of opening this link. */
 .qr-tip-link {
   display: flex;
   flex-direction: column;
